@@ -1,25 +1,96 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/http"
-
 	"cloud.google.com/go/storage"
 	"cloud.google.com/go/texttospeech/apiv1"
+	"encoding/json"
+	"fmt"
 	"github.com/julienschmidt/httprouter"
 	"golang.org/x/net/context"
+	"golang.org/x/net/html"
 	texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
+	"log"
+	"net/http"
+	"strings"
 )
 
-func main() {
-	router := httprouter.New()
-	router.GET("/synthesize/:articleId", handle)
-	log.Fatal(http.ListenAndServe(":4000", router))
+const (
+	ContentAPIEndpoint = "https://api.ffx.io/api/content/v0/assets/"
+)
+
+func processHTML(s string) string {
+	doc, err := html.Parse(strings.NewReader(s))
+	if err != nil {
+		return ""
+	}
+
+	var traversor func(*html.Node)
+	output := ""
+
+	traversor = func(n *html.Node) {
+		if n.Type == html.TextNode && n.Parent.Data != "x-placeholder" {
+			output += n.Data
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			traversor(c)
+		}
+	}
+
+	traversor(doc)
+
+	return output
 }
 
-func handle(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	// Instantiates a client.
+func fetchAssetData(endpoint string, id string) (*Asset, error) {
+	url := fmt.Sprintf("%s/%s", endpoint, id)
+
+	res, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+
+	var a Asset
+	json.NewDecoder(res.Body).Decode(&a)
+
+	return &a, nil
+}
+
+func voiceSelectionFor(ctx context.Context, client *texttospeech.Client, locale string, gender texttospeechpb.SsmlVoiceGender) *texttospeechpb.VoiceSelectionParams {
+
+	resp, err := client.ListVoices(ctx, &texttospeechpb.ListVoicesRequest{})
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	var localVoices []*texttospeechpb.Voice
+
+	// Get all the localized voices
+	for _, voice := range resp.Voices {
+		for _, langCode := range voice.LanguageCodes {
+			if langCode == locale {
+				localVoices = append(localVoices, voice)
+			}
+		}
+	}
+
+	var chosenVoice *texttospeechpb.Voice
+
+	// Find the first matching gender
+	for _, voice := range localVoices {
+		if voice.SsmlGender == gender {
+			chosenVoice = voice
+			break
+		}
+	}
+
+	return &texttospeechpb.VoiceSelectionParams{
+		Name:         chosenVoice.Name,
+		LanguageCode: locale,
+		SsmlGender:   gender,
+	}
+}
+
+func synthesizeToAudio(text string, locale string, gender texttospeechpb.SsmlVoiceGender) (*texttospeechpb.SynthesizeSpeechResponse, error) {
 	ctx := context.Background()
 
 	client, err := texttospeech.NewClient(ctx)
@@ -27,39 +98,23 @@ func handle(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		log.Fatal(err)
 	}
 
-	// Perform the text-to-speech request on the text input with the selected
-	// voice parameters and audio file type.
+	selectionParams := voiceSelectionFor(ctx, client, locale, gender)
+
 	req := texttospeechpb.SynthesizeSpeechRequest{
-		// Set the text input to be synthesized.
 		Input: &texttospeechpb.SynthesisInput{
-			InputSource: &texttospeechpb.SynthesisInput_Text{Text: "Hello, World!"},
+			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
-		// Build the voice request, select the language code ("en-US") and the SSML
-		// voice gender ("neutral").
-		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: "en-US",
-			SsmlGender:   texttospeechpb.SsmlVoiceGender_NEUTRAL,
-		},
-		// Select the type of audio file you want returned.
+		Voice: selectionParams,
 		AudioConfig: &texttospeechpb.AudioConfig{
 			AudioEncoding: texttospeechpb.AudioEncoding_MP3,
 		},
 	}
 
-	resp, err := client.SynthesizeSpeech(ctx, &req)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fileName := fmt.Sprintf("%s%s", ps.ByName("articleId"), ".mp3")
-	writeToStorage(fileName, resp.AudioContent)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	return client.SynthesizeSpeech(ctx, &req)
 }
 
+
 func writeToStorage(fileName string, audioContent []byte) error {
-	log.Print("YAY START!")
 	ctx := context.Background()
 
 	// Creates a client.
@@ -73,8 +128,7 @@ func writeToStorage(fileName string, audioContent []byte) error {
 
 	// Creates a Bucket instance.
 	bucket := client.Bucket(bucketName)
-
-	log.Print("Bucket created.\n", bucketName)
+	log.Printf("Bucket created %s.\n", bucketName)
 
 	wc := bucket.Object(fileName).NewWriter(ctx)
 	wc.ContentType = "audio/mpeg"
@@ -90,4 +144,34 @@ func writeToStorage(fileName string, audioContent []byte) error {
 	}
 
 	return nil
+}
+
+func indexHandler(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
+	id := params.ByName("articleId")
+	asset, err := fetchAssetData(ContentAPIEndpoint, id)
+	if err != nil {
+		log.Println(err)
+	}
+
+	articleText := processHTML(asset.Data.Body)
+
+	content, err := synthesizeToAudio(articleText, "en-AU", texttospeechpb.SsmlVoiceGender_MALE)
+	if err != nil {
+		log.Println(err)
+	}
+
+	fileName := fmt.Sprintf("%s%s", id, ".mp3")
+	writeToStorage(fileName, content.AudioContent)
+
+	response := fmt.Sprintf("{ \"status\": \"%s processed\" }", id)
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(response))
+}
+
+func main() {
+	router := httprouter.New()
+	router.GET("/synthesize/:articleId", indexHandler)
+	log.Fatal(http.ListenAndServe(":8080", router))
 }
