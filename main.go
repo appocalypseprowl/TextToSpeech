@@ -1,29 +1,24 @@
 package main
 
 import (
-	"cloud.google.com/go/storage"
-	"cloud.google.com/go/texttospeech/apiv1"
 	"fmt"
-	"golang.org/x/net/context"
-	texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
 	"log"
 	"net/http"
+
+	"cloud.google.com/go/storage"
+	"cloud.google.com/go/texttospeech/apiv1"
+	"github.com/julienschmidt/httprouter"
+	"golang.org/x/net/context"
+	texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
 )
 
 func main() {
-	http.HandleFunc("/", handle)
-	log.Print("Listening on port: 8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	router := httprouter.New()
+	router.GET("/synthesize/:articleId", handle)
+	log.Fatal(http.ListenAndServe(":4000", router))
 }
 
-func handle(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		log.Println("not found")
-		http.NotFound(w, r)
-		return
-	}
-	fmt.Fprint(w, "Hello, World!")
-
+func handle(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// Instantiates a client.
 	ctx := context.Background()
 
@@ -56,14 +51,15 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp.AudioContent)
+	fileName := fmt.Sprintf("%s%s", ps.ByName("articleId"), ".mp3")
+	writeToStorage(fileName, resp.AudioContent)
 
-	writeToStorage(resp.AudioContent)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 }
 
-func writeToStorage(audioContent []byte) error {
+func writeToStorage(fileName string, audioContent []byte) error {
+	log.Print("YAY START!")
 	ctx := context.Background()
 
 	// Creates a client.
@@ -78,9 +74,9 @@ func writeToStorage(audioContent []byte) error {
 	// Creates a Bucket instance.
 	bucket := client.Bucket(bucketName)
 
-	fmt.Printf("Bucket %v created.\n", bucketName)
+	log.Print("Bucket created.\n", bucketName)
 
-	wc := bucket.Object("article1").NewWriter(ctx)
+	wc := bucket.Object(fileName).NewWriter(ctx)
 	wc.ContentType = "audio/mpeg"
 	wc.Write(audioContent)
 
@@ -88,10 +84,10 @@ func writeToStorage(audioContent []byte) error {
 		return err
 	}
 
-  acl := bucket.Object("article1").ACL()
-  if err := acl.Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
-    return err
-  }
+	acl := bucket.Object(fileName).ACL()
+	if err := acl.Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
+		return err
+	}
 
 	return nil
 }
