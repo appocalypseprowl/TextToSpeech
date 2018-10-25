@@ -1,11 +1,11 @@
 package main
 
 import (
+	"cloud.google.com/go/storage"
 	"cloud.google.com/go/texttospeech/apiv1"
 	"fmt"
 	"golang.org/x/net/context"
 	texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
-	"io/ioutil"
 	"log"
 	"net/http"
 )
@@ -56,19 +56,42 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 
-	// The resp's AudioContent is binary.
-	filename := "output.mp3"
-	err = ioutil.WriteFile(filename, resp.AudioContent, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Audio content written to file: %v\n", filename)
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{}"))
+	w.Write(resp.AudioContent)
+
+	writeToStorage(resp.AudioContent)
 }
 
-func textToSpeechHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "ok")
+func writeToStorage(audioContent []byte) error {
+	ctx := context.Background()
+
+	// Creates a client.
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	// Sets the name for the new bucket.
+	bucketName := "cloud-tts-220423.appspot.com"
+
+	// Creates a Bucket instance.
+	bucket := client.Bucket(bucketName)
+
+	fmt.Printf("Bucket %v created.\n", bucketName)
+
+	wc := bucket.Object("article1").NewWriter(ctx)
+	wc.ContentType = "audio/mpeg"
+	wc.Write(audioContent)
+
+	if err := wc.Close(); err != nil {
+		return err
+	}
+
+  acl := bucket.Object("article1").ACL()
+  if err := acl.Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
+    return err
+  }
+
+	return nil
 }
