@@ -1,26 +1,24 @@
 package main
 
 import (
+	"cloud.google.com/go/texttospeech/apiv1"
 	"fmt"
+	"golang.org/x/net/context"
+	texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
 	"io/ioutil"
 	"log"
 	"net/http"
-  "cloud.google.com/go/texttospeech/apiv1"
-  "golang.org/x/net/context"
-  texttospeechpb "google.golang.org/genproto/googleapis/cloud/texttospeech/v1"
-  "google.golang.org/appengine"
 )
 
 func main() {
-  appengine.Main()
 	http.HandleFunc("/", handle)
-	http.HandleFunc("/texttospeech", textToSpeechHandler)
 	log.Print("Listening on port: 8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
+		log.Println("not found")
 		http.NotFound(w, r)
 		return
 	}
@@ -64,7 +62,11 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Audio content written to file: %v\n", filename)
+	log.Printf("Audio content written to file: %v\n", filename)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{}"))
 }
 
 func textToSpeechHandler(w http.ResponseWriter, r *http.Request) {

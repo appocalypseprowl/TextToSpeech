@@ -1,6 +1,6 @@
 runtime: go
 env: flex
-api_version: go1
+api_version: 1
 
 manual_scaling:
   instances: 1
@@ -8,3 +8,6 @@ resources:
   cpu: 1
   memory_gb: 0.5
   disk_size_gb: 10
+
+env_variables:
+  GOOGLE_APPLICATION_CREDENTIALS: './cloud-tts-49675101b601.json'
