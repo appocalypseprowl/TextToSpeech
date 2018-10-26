@@ -147,7 +147,9 @@ func writeToStorage(fileName string, audioContent []byte) error {
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
+	gender := params.ByName("gender")
 	id := params.ByName("articleId")
+
 	asset, err := fetchAssetData(ContentAPIEndpoint, id)
 	if err != nil {
 		log.Println(err)
@@ -155,7 +157,17 @@ func indexHandler(w http.ResponseWriter, r *http.Request, params httprouter.Para
 
 	articleText := processHTML(asset.Data.Body)
 
-	content, err := synthesizeToAudio(articleText, "en-AU", texttospeechpb.SsmlVoiceGender_MALE)
+	var voiceGender texttospeechpb.SsmlVoiceGender
+	switch gender {
+	case "male":
+		voiceGender = texttospeechpb.SsmlVoiceGender_MALE
+	case "female":
+		voiceGender = texttospeechpb.SsmlVoiceGender_FEMALE
+	default:
+		voiceGender = texttospeechpb.SsmlVoiceGender_MALE
+	}
+
+	content, err := synthesizeToAudio(articleText, "en-AU", voiceGender)
 	if err != nil {
 		log.Println(err)
 	}
@@ -172,6 +184,6 @@ func indexHandler(w http.ResponseWriter, r *http.Request, params httprouter.Para
 
 func main() {
 	router := httprouter.New()
-	router.GET("/synthesize/:articleId", indexHandler)
+	router.GET("/synthesize/:gender/:articleId", indexHandler)
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
