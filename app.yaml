@@ -10,4 +10,4 @@ resources:
   disk_size_gb: 10
 
 env_variables:
-  GOOGLE_APPLICATION_CREDENTIALS: './cloud-tts-49675101b601.json'
+  GOOGLE_APPLICATION_CREDENTIALS: './cloud-tts-2-e7e35fbd575b.json'

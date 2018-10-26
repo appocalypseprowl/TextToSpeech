@@ -124,7 +124,7 @@ func writeToStorage(fileName string, audioContent []byte) error {
 	}
 
 	// Sets the name for the new bucket.
-	bucketName := "cloud-tts-220423.appspot.com"
+	bucketName := "cloud-tts-2.appspot.com"
 
 	// Creates a Bucket instance.
 	bucket := client.Bucket(bucketName)
